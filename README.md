@@ -1,4 +1,3 @@
-```markdown
 <div align="center">
   <h1>⚙️ IronAgent</h1>
   <p><b>The Bare-Metal AI Agent Orchestrator</b></p>
