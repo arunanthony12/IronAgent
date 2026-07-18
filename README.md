@@ -15,26 +15,27 @@
 > [!IMPORTANT]
 > **IronAgent** is an experimental, ultra-lightweight AI orchestrator designed to solve the memory bloat and execution overhead of modern agentic frameworks. By pushing the `Think ➔ Plan ➔ Act` state machine down to the native C/C++ layer, it bypasses standard garbage collection in favor of a custom 32-byte aligned memory arena. 
 
+## 💡 Why IronAgent? (The Philosophy)
+Modern AI agent frameworks (like LangChain, AutoGen, and CrewAI) are fantastic for prototyping, but they suffer from massive Python and Node.js overhead. When building continuous, long-running agents, memory fragments quickly, and context window pruning (array slicing) becomes an expensive, CPU-blocking operation. 
+
+**IronAgent is a rebellion against AI bloat.** We treat AI orchestration as a high-performance systems engineering problem. By handling memory allocation, thread pooling, and context sliding windows directly in native C and C++, we provide a lightning-fast backend that remains seamlessly controllable via a clean Python API.
+
+## 🎯 Main Applications (Where it Shines)
+Because IronAgent prioritizes raw execution speed and low memory footprints, it is uniquely suited for workloads where standard Python frameworks fail:
+* 🤖 **Edge AI & IoT Devices:** Running autonomous agents on hardware where RAM is strictly constrained (Raspberry Pi, embedded systems, older laptops).
+* 👾 **Game Engines & NPCs:** The custom C arena allocator provides deterministic memory management without garbage collection pauses, making it perfect for integrating LLM agents directly into C++ game loops without stuttering.
+* 💻 **Always-On CLI Assistants:** Terminal-native orchestration that idles at ~200MB instead of 1.5GB, letting you run local models (Qwen, Llama) continuously in the background without crippling your machine's resources.
+* 🔒 **High-Security / Privacy-First Workflows:** A sandboxed, locally-hosted execution environment for sensitive filesystem and shell manipulation using FastMCP, completely isolated from cloud APIs.
+
 ## ✨ Key Features
-* 🚀 **Hardware-Level Speed:** Custom 2ns AVX2-aligned arena allocator.
-* 🧠 **O(1) Memory Pruning:** Replaces massive array slicing with a `std::deque` sliding window.
-* 🐍 **Zero Bloat:** Pure C/C++ execution bridged to a Python 3 API. Zero JavaScript/Node.js dependencies.
-* 🔧 **Native Tooling:** Built-in FastMCP tool routing and local LLM execution (Qwen, Llama).
-
-<details>
-<summary><b>Table of Contents</b> (Click to expand)</summary>
-
-- [🏗️ Architecture](#️-architecture)
-- [📊 Benchmarks: The Brutal Truth](#-benchmarks-the-brutal-truth-v100)
-- [⚙️ Installation](#️-installation)
-- [💻 Quick Start](#-quick-start)
-- [🚀 Roadmap (v1.1)](#-roadmap-v11)
-
-</details>
+* 🚀 **Hardware-Level Speed:** Custom 2ns AVX2-aligned arena allocator built in pure C.
+* 🧠 **O(1) Memory Pruning:** Replaces massive array slicing with a `std::deque` sliding window in C++.
+* 🐍 **Zero Bloat:** Pure C/C++ execution bridged to a Python 3 API. Zero JavaScript dependencies.
+* 🔧 **Native Tooling:** Built-in FastMCP tool routing and local LLM execution.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Deep Dive: The 3-Layer Architecture
 
 ```mermaid
 graph TD
@@ -85,6 +86,18 @@ graph TD
 
 ```
 
+### 1. The C Core (Bare-Metal)
+
+At the bottom of the stack sits `allocator.c` and `thread_pool.c`. Instead of relying on Python's garbage collector, IronAgent uses a custom Arena Allocator. This pre-allocates a massive block of memory aligned for AVX2 vector instructions, meaning memory allocation for agent thoughts takes roughly ~2ns, eliminating heap fragmentation.
+
+### 2. The C++ Engine
+
+This layer manages the `ContextBuffer` and `AgentState`. In standard Python frameworks, removing old messages when the token limit is reached requires copying entire arrays. IronAgent uses a `std::deque` (double-ended queue), allowing constant-time pop operations at the front of the context window. It prunes massive memory payloads in under 0.5ms.
+
+### 3. The Python Layer
+
+We expose this raw power through Pybind11. Developers get the friendly, easy-to-read syntax of Python, allowing them to define custom tools and run the FastMCP server, while the C++ engine acts as the brain.
+
 ---
 
 ## 📊 Benchmarks: The Brutal Truth (v1.0.0)
@@ -98,13 +111,20 @@ We stress-tested IronAgent against LangChain using a local `qwen2.5:3b` model. T
 
 > [!CAUTION]
 > **Why did we lose the Hot-Loop? The Pybind11 Tollbooth.**
-> Our internal C++ engine is blindingly fast, but the main orchestration while-loop currently resides in Python. On every cycle, massive string payloads must cross the Python ↔ C++ boundary. Pybind11 mandates a blocking deep-copy of these strings, creating an I/O bottleneck that kills throughput. LangChain bypasses this entirely using native C `\n.join()` operations inside Python. *See v1.1 Roadmap for the fix.*
+> Our internal C++ engine is blindingly fast, but the main orchestration while-loop currently resides in Python. On every cycle, massive string payloads must cross the Python ↔ C++ boundary. Pybind11 mandates a blocking deep-copy of these strings, creating an I/O bottleneck that kills throughput. *See v1.1 Roadmap for the fix.*
 
 ---
 
 ## ⚙️ Installation
 
-**Prerequisites:** `cmake` (3.15+), `gcc`/`clang` (C++20), `python` (3.10+), and `ollama`.
+**Prerequisites:**
+
+* `cmake` (3.15 or higher)
+* `gcc` or `clang` (Must support C++20 standard)
+* `python` (3.10 or higher)
+* `ollama` (Running locally)
+
+**Step-by-step build:**
 
 ```bash
 # 1. Clone the repository
@@ -122,50 +142,55 @@ pip install -e .
 
 ---
 
-## 💻 Quick Start
+## 💻 Usage & Tutorials
 
-IronAgent is designed to be completely transparent from Python, while doing all the heavy lifting in C++.
+### 1. Basic Agent Initialization
+
+IronAgent is designed to be completely transparent from Python.
 
 ```python
 from coreagent.agent import Agent
 
-# 1. Instantiate the bare-metal agent
+# Instantiate the bare-metal agent with 4 hardware threads
 agent = Agent(name="Jarvis", num_threads=4)
 
-# 2. Inject system constraints into the C++ ContextBuffer
+# Inject system instructions into the C++ ContextBuffer
 agent.context.add_system(
     "You are an elite, bare-metal AI agent. "
     "Always think step-by-step, plan your tool usage, and act."
 )
 
-# 3. Feed it a task
-agent.context.add_user("Create a file named 'hello_world.txt' with the text 'IronAgent is alive!'")
-
-# 4. Trigger the C++ / Python orchestrator loop
+# Feed it a task and trigger the orchestrator loop
+agent.context.add_user("Create a file named 'status.txt'.")
 agent.run_llm(model="qwen2.5:3b")
 
 ```
 
-### Adding Custom Tools
+### 2. Injecting Custom Tools (Advanced)
 
-Inject Python tools directly into the C++ `ToolRegistry` using a simple decorator:
+You can inject native Python functions directly into the C++ `ToolRegistry`. The agent will automatically evaluate these tools during its `Plan` phase and execute them during the `Act` phase.
 
 ```python
 from coreagent import Agent, ToolInput, ToolOutput
+import os
 
 agent = Agent()
 
-@agent.tool("multiply", "Multiply two numbers. args='a b'")
-def multiply(input: ToolInput) -> ToolOutput:
+@agent.tool("system_stats", "Get the current CPU and memory usage of the system.")
+def system_stats(input: ToolInput) -> ToolOutput:
     out = ToolOutput()
     try:
-        a, b = map(int, input.args.split())
-        out.result = str(a * b)
+        # Example logic: Read load average on Linux
+        load = os.getloadavg()
+        out.result = f"CPU Load Average: {load}"
         out.success = True
     except Exception as e:
         out.success = False
         out.error = str(e)
     return out
+
+agent.context.add_user("Check the system stats and tell me if the CPU is overloaded.")
+agent.run_llm(model="qwen2.5:3b")
 
 ```
 
@@ -177,6 +202,18 @@ To achieve true bare-metal dominance over LangChain, v1.1 will eliminate the FFI
 
 * [ ] **Zero-Copy Boundaries:** Implement `std::string_view` across Pybind11 to eliminate string deep-copying between Python and C++.
 * [ ] **Arena-Backed Buffers:** Wire the C++ `ContextBuffer` directly into our custom `ca_arena_t` allocator instead of falling back to the OS heap.
-* [ ] **Migrate the Hot Loop:** Move the core orchestrator loop entirely into C++. Python will strictly be used for configuration and final output.
+* [ ] **Migrate the Hot Loop:** Move the core orchestrator loop entirely into C++. Python will strictly be used for configuration, tool definitions, and final output.
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions from C, C++, and Python developers!
+
+1. Fork the Project
+2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the Branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ---
