@@ -39,16 +39,6 @@ Because IronAgent prioritizes raw execution speed and low memory footprints, it 
 ---
 
 ## 🏗️ Deep Dive: The 3-Layer Architecture
-<!-- This image displays by default for everyone (Mobile & Desktop) -->
-<div align="center">
-  <img src="assets/Architecture_Chart.svg" alt="IronAgent Architecture" width="800"/>
-</div>
-
-<br>
-
-<!-- This hides the interactive diagram behind a click to clean up the page -->
-<details>
-  <summary><b>View Interactive Architecture (Desktop Recommended)</b></summary>
 
 ```mermaid
 graph TD
