@@ -1,0 +1,184 @@
+#include "executor.h"
+
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <sys/time.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <signal.h>
+#include <time.h>
+
+/* ── Get current time in ms ──────────────────────────────── */
+static uint64_t now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* ── Read all data from fd into a heap buffer ────────────── */
+static char* read_fd_all(int fd, size_t* out_len) {
+    size_t  cap  = 4096;
+    size_t  len  = 0;
+    char*   buf  = (char*)malloc(cap);
+
+    if (!buf) return NULL;
+
+    while (1) {
+        if (len + 1 >= cap) {
+            cap  *= 2;
+            if (cap > CA_EXEC_MAX_OUTPUT) cap = CA_EXEC_MAX_OUTPUT;
+            char* nb = (char*)realloc(buf, cap);
+            if (!nb) { free(buf); return NULL; }
+            buf = nb;
+        }
+        ssize_t n = read(fd, buf + len, cap - len - 1);
+        if (n <= 0) break;
+        len += (size_t)n;
+        if (len >= CA_EXEC_MAX_OUTPUT - 1) break;
+    }
+
+    buf[len] = '\0';
+    if (out_len) *out_len = len;
+    return buf;
+}
+
+/* ── Default config ──────────────────────────────────────── */
+ca_exec_config_t ca_exec_default_config(void) {
+    ca_exec_config_t cfg;
+    memset(&cfg, 0, sizeof(cfg));
+    cfg.timeout_ms      = CA_EXEC_DEFAULT_TIMEOUT_MS;
+    cfg.capture_stderr  = 1;
+    return cfg;
+}
+
+/* ── Core: run process ───────────────────────────────────── */
+ca_exec_result_t ca_exec_run(const ca_exec_config_t* config) {
+    ca_exec_result_t result;
+    memset(&result, 0, sizeof(result));
+    result.status = CA_EXEC_ERROR;
+
+    if (!config || !config->command) return result;
+
+    /* Create pipes for stdout and stderr */
+    int stdout_pipe[2], stderr_pipe[2];
+
+    if (pipe(stdout_pipe) < 0) return result;
+    if (pipe(stderr_pipe) < 0) {
+        close(stdout_pipe[0]); close(stdout_pipe[1]);
+        return result;
+    }
+
+    uint64_t start = now_ms();
+    pid_t    pid   = fork();
+
+    if (pid < 0) {
+        /* Fork failed */
+        close(stdout_pipe[0]); close(stdout_pipe[1]);
+        close(stderr_pipe[0]); close(stderr_pipe[1]);
+        return result;
+    }
+
+    if (pid == 0) {
+        /* ── Child process ─────────────────────────────────── */
+
+        /* Redirect stdout/stderr to pipes */
+        dup2(stdout_pipe[1], STDOUT_FILENO);
+        dup2(stderr_pipe[1], STDERR_FILENO);
+
+        close(stdout_pipe[0]); close(stdout_pipe[1]);
+        close(stderr_pipe[0]); close(stderr_pipe[1]);
+
+        /* Change working directory if specified */
+        if (config->working_dir)
+            chdir(config->working_dir);
+
+        /* Build argv */
+        const char* argv[CA_EXEC_MAX_ARGS + 2];
+        argv[0] = config->command;
+        int argc = 1;
+        int i    = 0;
+        while (config->args[i] && argc < CA_EXEC_MAX_ARGS) {
+            argv[argc++] = config->args[i++];    /* ← FIXED: no ambiguity */
+        }
+        argv[argc] = NULL;
+
+        execvp(config->command, (char* const*)argv);
+
+        /* If execvp returns, it failed */
+        fprintf(stderr, "[CoreAgent Executor] exec failed: %s\n",
+                strerror(errno));
+        _exit(127);
+    }
+
+    /* ── Parent process ──────────────────────────────────── */
+    close(stdout_pipe[1]);
+    close(stderr_pipe[1]);
+
+    /* Read output with timeout */
+    /* Set stdout_pipe[0] to non-blocking */
+    fcntl(stdout_pipe[0], F_SETFL, O_NONBLOCK);
+    fcntl(stderr_pipe[0], F_SETFL, O_NONBLOCK);
+
+    /* Simple timeout: wait in loop, kill if exceeded */
+    int    status     = 0;
+    int    done       = 0;
+    while (!done) {
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) {
+            done = 1;
+        } else {
+            uint64_t elapsed = now_ms() - start;
+            if (elapsed >= config->timeout_ms) {
+                kill(pid, SIGKILL);
+                waitpid(pid, &status, 0);
+                result.status = CA_EXEC_TIMEOUT;
+                fprintf(stderr,
+                    "[CoreAgent] Process timed out after %ums\n",
+                    config->timeout_ms);
+                goto cleanup;
+            }
+            /* Sleep briefly to avoid busy-waiting */
+            struct timespec sleep_ts = { 0, 5 * 1000000 }; // 5ms
+            nanosleep(&sleep_ts, NULL);
+        }
+    }
+
+    result.exit_code    = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    result.elapsed_ms   = (uint32_t)(now_ms() - start);
+    result.status       = CA_EXEC_OK;
+
+cleanup:
+    result.stdout_data = read_fd_all(stdout_pipe[0], &result.stdout_len);
+    result.stderr_data = config->capture_stderr
+                         ? read_fd_all(stderr_pipe[0], &result.stderr_len)
+                         : NULL;
+
+    close(stdout_pipe[0]);
+    close(stderr_pipe[0]);
+
+    return result;
+}
+
+/* ── Shell convenience wrapper ───────────────────────────── */
+ca_exec_result_t ca_exec_shell(const char* cmd, uint32_t timeout_ms) {
+    ca_exec_config_t config = ca_exec_default_config();
+    config.command          = "/bin/sh";
+    config.args[0]          = "-c";
+    config.args[1]          = cmd;
+    config.args[2]          = NULL;
+    config.timeout_ms       = timeout_ms ? timeout_ms
+                                         : CA_EXEC_DEFAULT_TIMEOUT_MS;
+    return ca_exec_run(&config);
+}
+
+/* ── Free result ─────────────────────────────────────────── */
+void ca_exec_result_free(ca_exec_result_t* result) {
+    if (!result) return;
+    free(result->stdout_data);
+    free(result->stderr_data);
+    result->stdout_data = NULL;
+    result->stderr_data = NULL;
+}
