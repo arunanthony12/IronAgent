@@ -64,6 +64,7 @@ graph TD
 
     Ctx --> Arena
     Reg --> Threads
+```
 
 The 3 Layers:
 The C Core (Bare-Metal): A custom AVX2-aligned memory arena (allocator.c) and a lightweight thread pool that execute at hardware speeds (allocations measured in ~2ns).
