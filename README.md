@@ -11,7 +11,7 @@
   <br />
 
   <!-- Interactive Terminal GIF -->
-  <img src="demo.gif" alt="IronAgent Live Demo" width="85%" />
+  <img src="bench.gif" alt="IronAgent Live Demo" width="85%" />
   <br />
   <br />
 </div>
