@@ -1,6 +1,3 @@
-Here is the complete, updated **`README.md`** file, including the new SVG cover image, the versioned benchmark comparison (IronAgent v1.1.0 vs. LangChain Core v1.4.9), and the updated v1.2.0 roadmap.
-
-```markdown
 <div align="center">
   <img src="cover.svg" alt="IronAgent Banner" width="100%"/>
 
