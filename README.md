@@ -222,5 +222,3 @@ We welcome contributions from C, C++, and Python developers!
 5. Open a Pull Request
 
 ```
-
-```
