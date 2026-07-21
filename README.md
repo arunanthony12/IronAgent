@@ -7,7 +7,12 @@
   <a href="https://isocpp.org/"><img src="https://img.shields.io/badge/C%2B%2B-20-00599C.svg?style=for-the-badge&logo=c%2B%2B&logoColor=white" alt="C++"></a>
   <a href="https://en.wikipedia.org/wiki/C11_(C_standard_revision)"><img src="https://img.shields.io/badge/C-11-282C34.svg?style=for-the-badge&logo=c&logoColor=white" alt="C"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="License"></a>
-   <br />
+  <br />
+  <br />
+
+  <!-- Interactive Terminal GIF -->
+  <img src="demo.gif" alt="IronAgent Live Demo" width="85%" />
+  <br />
   <br />
 </div>
 
